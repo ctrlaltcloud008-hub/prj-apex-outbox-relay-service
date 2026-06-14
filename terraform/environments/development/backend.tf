@@ -1,6 +1,6 @@
 terraform {
   backend "gcs" {
-    bucket = "apex-outbox-tf-state"
-    prefix = "terraform/state/development"
+    bucket = "apex-bkt-tf-state"
+    prefix = "terraform/state/apex-outbox-relay/development"
   }
 }

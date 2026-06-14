@@ -31,3 +31,6 @@ go.work.sum
 # .idea/
 # .vscode/
 /.megamemory
+/service-graph.yaml
+/terraform/environments/development/.terraform
+/terraform/environments/development/.terraform.lock.hcl

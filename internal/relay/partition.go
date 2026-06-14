@@ -9,16 +9,24 @@ import (
 
 	"cloud.google.com/go/spanner"
 	"github.com/ctrlaltcloud008-hub/prj-apex-core-modules/pkg/outbox"
-	"github.com/ctrlaltcloud008-hub/prj-apex-outbox-relay-service/internal/checkpoint"
-	store "github.com/ctrlaltcloud008-hub/prj-apex-outbox-relay-service/internal/spanner"
+	"github.com/ctrlaltcloud008-hub/prj-apex-outbox-poller-service/internal/checkpoint"
+	store "github.com/ctrlaltcloud008-hub/prj-apex-outbox-poller-service/internal/spanner"
 	"google.golang.org/api/iterator"
+	"google.golang.org/grpc/codes"
 )
 
 const outboxTable = "outbox"
 
-// consumePartition runs the Change Stream query for one partition and processes
-// all records until the partition ends (ChildPartitionsRecord received) or ctx
-// is cancelled. spawn is called to start goroutines for child partitions.
+// consumePartition consumes one Change Stream partition, clamping the bootstrap
+// start timestamp forward if it predates the stream's earliest readable point.
+//
+// On bootstrap the configured lookback can place start_ts before the change
+// stream's earliest readable point — most often during the first lookback
+// window after the stream is created, since a stream cannot be read from before
+// it existed. Spanner rejects that read with OutOfRange. Nothing exists to read
+// before the stream began, so we clamp the start to now and retry once rather
+// than letting the error propagate up and crash the relay; the PENDING sweep
+// backstops any entry committed in the clamped-away gap.
 func (r *Relay) consumePartition(ctx context.Context, spawn func(string, time.Time), token string, startTs time.Time) error {
 	isInitial := token == ""
 
@@ -27,6 +35,29 @@ func (r *Relay) consumePartition(ctx context.Context, spawn func(string, time.Ti
 		logToken = "<initial>"
 	}
 
+	clamped := false
+	for {
+		err := r.readPartition(ctx, spawn, token, logToken, isInitial, startTs)
+		if isInitial && !clamped && spanner.ErrCode(err) == codes.OutOfRange {
+			now := time.Now().UTC()
+			r.logger.Warn(ctx, "outbox_relay.start_clamped",
+				"Bootstrap start_timestamp predates the change stream; clamping to now and retrying",
+				slog.Time("requested_start_ts", startTs),
+				slog.Time("clamped_start_ts", now),
+				slog.String("error", err.Error()),
+			)
+			startTs = now
+			clamped = true
+			continue
+		}
+		return err
+	}
+}
+
+// readPartition runs the Change Stream query for one partition and processes
+// all records until the partition ends (ChildPartitionsRecord received) or ctx
+// is cancelled. spawn is called to start goroutines for child partitions.
+func (r *Relay) readPartition(ctx context.Context, spawn func(string, time.Time), token, logToken string, isInitial bool, startTs time.Time) error {
 	r.logger.Info(ctx, "outbox_relay.partition_started",
 		"Change Stream partition consumer started",
 		slog.String("token", logToken),
@@ -277,9 +308,21 @@ func parsePayload(payload spanner.NullJSON) (outbox.Envelope, []byte, error) {
 		return outbox.Envelope{}, nil, fmt.Errorf("payload is null")
 	}
 
-	raw, err := json.Marshal(payload.Value)
-	if err != nil {
-		return outbox.Envelope{}, nil, fmt.Errorf("marshal JSON payload: %w", err)
+	// Change streams serialize JSON-typed columns as a JSON string, so the
+	// stream path yields a Go string holding the envelope JSON. Direct reads
+	// (the sweep path) yield the already-decoded value, which we re-marshal.
+	var raw []byte
+	switch v := payload.Value.(type) {
+	case string:
+		raw = []byte(v)
+	case []byte:
+		raw = v
+	default:
+		b, err := json.Marshal(payload.Value)
+		if err != nil {
+			return outbox.Envelope{}, nil, fmt.Errorf("marshal JSON payload: %w", err)
+		}
+		raw = b
 	}
 
 	env, err := outbox.ParseEnvelope(raw)

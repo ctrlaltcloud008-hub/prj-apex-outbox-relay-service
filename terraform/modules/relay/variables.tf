@@ -24,7 +24,6 @@ variable "environment" {
 variable "relay_sa_email" {
   type        = string
   description = "Service account email the outbox relay runs as."
-  default     = "ci-cd-98@apex-494315.iam.gserviceaccount.com"
 }
 
 variable "service_url" {

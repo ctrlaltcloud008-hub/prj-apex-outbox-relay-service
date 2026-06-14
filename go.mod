@@ -1,11 +1,11 @@
-module github.com/ctrlaltcloud008-hub/prj-apex-outbox-relay-service
+module github.com/ctrlaltcloud008-hub/prj-apex-outbox-poller-service
 
 go 1.26.3
 
 require (
 	cloud.google.com/go/pubsub/v2 v2.0.0
 	cloud.google.com/go/spanner v1.91.0
-	github.com/ctrlaltcloud008-hub/prj-apex-core-modules v1.1.6
+	github.com/ctrlaltcloud008-hub/prj-apex-core-modules v1.1.8
 	github.com/spf13/viper v1.21.0
 	google.golang.org/api v0.280.0
 )

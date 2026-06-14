@@ -9,8 +9,8 @@ import (
 
 	"cloud.google.com/go/spanner"
 	"github.com/ctrlaltcloud008-hub/prj-apex-core-modules/pkg/logger"
-	"github.com/ctrlaltcloud008-hub/prj-apex-outbox-relay-service/internal/checkpoint"
-	"github.com/ctrlaltcloud008-hub/prj-apex-outbox-relay-service/internal/pubsub"
+	"github.com/ctrlaltcloud008-hub/prj-apex-outbox-poller-service/internal/checkpoint"
+	"github.com/ctrlaltcloud008-hub/prj-apex-outbox-poller-service/internal/pubsub"
 )
 
 // Relay consumes a Spanner Change Stream and publishes outbox entries to Pub/Sub.

@@ -15,11 +15,11 @@ import (
 
 	"github.com/ctrlaltcloud008-hub/prj-apex-core-modules/pkg/logger"
 	"github.com/ctrlaltcloud008-hub/prj-apex-core-modules/pkg/otel"
-	"github.com/ctrlaltcloud008-hub/prj-apex-outbox-relay-service/internal/config"
-	"github.com/ctrlaltcloud008-hub/prj-apex-outbox-relay-service/internal/handler"
-	"github.com/ctrlaltcloud008-hub/prj-apex-outbox-relay-service/internal/pubsub"
-	"github.com/ctrlaltcloud008-hub/prj-apex-outbox-relay-service/internal/relay"
-	"github.com/ctrlaltcloud008-hub/prj-apex-outbox-relay-service/internal/spanner"
+	"github.com/ctrlaltcloud008-hub/prj-apex-outbox-poller-service/internal/config"
+	"github.com/ctrlaltcloud008-hub/prj-apex-outbox-poller-service/internal/handler"
+	"github.com/ctrlaltcloud008-hub/prj-apex-outbox-poller-service/internal/pubsub"
+	"github.com/ctrlaltcloud008-hub/prj-apex-outbox-poller-service/internal/relay"
+	"github.com/ctrlaltcloud008-hub/prj-apex-outbox-poller-service/internal/spanner"
 )
 
 func main() {
@@ -126,12 +126,24 @@ func run() error {
 		slog.Int("start_lookback_seconds", cfg.StartLookbackSecs()),
 	)
 
+	sweeper := relay.NewSweeper(
+		spannerClient,
+		publisher,
+		time.Duration(cfg.SweepIntervalSecs())*time.Second,
+		time.Duration(cfg.SweepMinAgeSecs())*time.Second,
+		log,
+	)
+
+	cleanupHandler := handler.NewCleanupHandler(log, spannerClient,
+		time.Duration(cfg.PublishedRetentionHrs())*time.Hour)
+
 	log.Info(ctx, "service.startup_complete", "All dependencies initialized, ready to relay",
 		slog.String("component", "bootstrap"),
 	)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", handler.Healthz)
+	mux.Handle("POST /cleanup", cleanupHandler)
 
 	server := &http.Server{
 		Addr:    cfg.Port(),
@@ -170,6 +182,17 @@ func run() error {
 		if err := r.Run(ctx); err != nil {
 			relayErrCh <- err
 		}
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		log.Info(ctx, "outbox_sweep.starting", "Starting PENDING sweep fallback",
+			slog.String("component", "sweeper"),
+			slog.Int("interval_seconds", cfg.SweepIntervalSecs()),
+			slog.Int("min_age_seconds", cfg.SweepMinAgeSecs()),
+		)
+		sweeper.Run(ctx)
 	}()
 
 	var runErr error
